@@ -4,6 +4,19 @@ var budgetController = (function() {    // voor het binnenwerk (smart)
         this.id = id;
         this.description = description;
         this.value = value;
+        this.percentage = -1;
+    }
+
+    Expense.prototype.calcPercentage = function(totalIncome) {
+        if (totalIncome > 0) {
+            this.percentage = Math.round((this.value / totalIncome) * 100);
+        } else {
+            this.percentage = -1;
+        }
+    };
+
+    Expense.prototype.getPercentage = function() {
+        return this.percentage;
     }
 
     var Income = function(id, description, value) {         // ik vind het eigenlijk maar niks dat de eerste drie regels exact hetzelfde zijn. Hadden we daar geen superclasses voor? Zijn er geen superconstructors?
@@ -23,7 +36,7 @@ var budgetController = (function() {    // voor het binnenwerk (smart)
     var data = {        // zodat we geen variabelen hebben rondslingeren...
         allItems: {     // is ipv los allExpenses en allIncomes in het dataobject
             exp: [],
-            inc: []
+            inc: []     // is dus een array met newItem-objecten met daarin id, description en value
         },
         totals: {
             exp: 0,
@@ -52,6 +65,20 @@ var budgetController = (function() {    // voor het binnenwerk (smart)
             return newItem;
         },
 
+        deleteItem: function(type, id) {
+            var ids, index;
+            // nu hebben we een probleem, want het id-nummer van het te verwijderen element is vanwege juist deze mogelijkheid tot verwijderen niet per se hetzelfde als de plaats in de data-array waar ze in staan. Althans - met de push-methode niet. We hadden ook items in data kunnen zetten met array[i] = item[i] of zoiets. Maar dan had je later lege plekken gekregen bij het deleten...
+            ids = data.allItems[type].map(function(current) { // map returnt een nieuwe array waarop een of andere bewerking is uitgevoerd
+                return current.id;      // dus nu heb je een array met id-nummers ipv een array met newItem-objecten met daarin id-nummers
+            });
+
+            index = ids.indexOf(id);    // dus hiermee zoeken we de index van de id die we erin hebben gegooid
+
+            if (index !== -1) {         // dit is voor het geval een newItem op magische wijze is verschenen zonder id-nummer, aangezien je niet op de delete-button kunt klikken als er geen item is
+                data.allItems[type].splice(index, 1);   // juiste element uit data verwijderen met .splice(welk indexnummer, hoeveel elementen) 
+            }
+        },
+
         calculateBudget: function() {
             // calc total income and total expenses. Ennnnnn dit gaan we in een aparte niet-publieke functie doen, dus hierboven, buiten return
             calculateTotal('inc');
@@ -61,10 +88,23 @@ var budgetController = (function() {    // voor het binnenwerk (smart)
             data.budget = data.totals.inc - data.totals.exp;
             // calc % of inc that was spent
             if (data.totals.inc > 0) {          // als je alleen uitgaven hebt, probeert ie door 0 te delen en dan krijg je de waarde Infinity (als in, eindeloze schulden). Kennelijk mag dat niet blijven staan
-                data.percentage = Math.round(data.totals.exp / data.totals.inc * 100);
+                data.percentage = Math.round((data.totals.exp / data.totals.inc) * 100);
             } else {
                 data.percentage = -1;
             }
+        },
+
+        calculatePercentages: function() {
+            data.allItems.exp.forEach(function(cur) {
+                cur.calcPercentage(data.totals.inc);
+            });
+        },
+
+        getPercentages: function() {
+            var allPerc = data.allItems.exp.map(function(cur) {
+                return cur.getPercentage();
+            });
+            return allPerc;
         },
 
         getBudget: function() {             // simpele getter, doet niets anders dan info bezorgen in net pakketje
@@ -95,12 +135,38 @@ var UIController = (function() {        // voor het zichtbare stuk (dumb)
         incomeLabel: '.budget__income--value',
         expensesLabel: '.budget__expenses--value',
         percentageLabel: '.budget__expenses--percentage',
-        container: '.container'
+        container: '.container',
+        expensesPercLabel: '.item__percentage',
+        dateLabel: '.budget__title--month'
     }
+
+    var formatNumber = function(num, type) {     // we willen de bedragen weergeven in een typisch bedragenformat: 1.234,56 (Jonas houdt de Amerikaanse notatie aan, maar de rest van de wereld inclusief de wetenschappelijke wereld doet het zo, dus.)
+        var numSplit, int, dec;
+
+        num = Math.abs(num);    // hiermee worden negatieve getallen geneutraliseerd, en num dus herschreven als per definitie positief
+        num = num.toFixed(2);   // number method (ook primitives als strings en nummers kunnen methoden hebben; daarvoor wrapt JS ze voor de gelegenheid in een object...) waarmee elk getal twee decimalen krijgt/houdt en in een string verandert(!)
+        
+        numSplit = num.split('.');
+        
+        int = numSplit[0];
+        if (int.length > 3) {
+            int = int.substr(0,int.length-3) + '.' + int.substr(int.length-3,3);    // hiermee pakken we een deel van een string, te beginnen bij [0] en dan het aantal tekens dat je wilt selecteren
+        }
+        
+        dec = numSplit[1];
+        
+        return (type === 'exp' ? '-' : '+') + ' ' + int + ',' + dec;    // pak type, kijk of het + of - moet zijn, plus spatie, plus het 'hele' deel dat we net hebben omgezet naar iets als 3.455, plus komma, plus decimalen
+    };
+
+    var nodeListForEach = function(list, callback) {        // nu hebben we weer het probleem dat we een lijst hebben die geen array is. Vandaar deze custom forEach speciaal voor zulke lijsten
+        for (var i = 0; i < list.length; i++) {             //  --> doe die shit op regel 218 voor elk item in de list
+            callback(list[i], i);
+        }
+    };
 
     return {                            // dit ding moet bereikbaar zijn voor de andere controllers; het is 'public'
         getDOMstrings: function() {     // we willen DOMstrings ook elders gebruiken, dus aan alle zooi die UIController publiek maakt (returnt) voegen we nu dit toe
-            return DOMstrings;          // Maar waarom staan de DOMstrings-waardes hier niet direct in, zoals bij de input? Omdat ze statisch zijn?
+            return DOMstrings;          
         },
 
         getInput: function() {
@@ -109,6 +175,18 @@ var UIController = (function() {        // voor het zichtbare stuk (dumb)
                 description: document.querySelector(DOMstrings.inputDescription).value,     // beschrijvingsveld
                 value: parseFloat(document.querySelector(DOMstrings.inputValue).value)      // bedrag, als string, met parseFloat om string naar getal om te zetten, anders rekent het zo lastig
             };
+        },
+
+        changedType: function() {
+            var fields = document.querySelectorAll(
+                DOMstrings.inputType + ',' +
+                DOMstrings.inputDescription + ',' +
+                DOMstrings.inputValue);
+
+            nodeListForEach(fields, function(cur) {
+                cur.classList.toggle('red-focus');     // als die +-selector verandert (als het goed is van + naar -), voeg red-focus toe, als ie terug verandert, haal 'm weer weg. En het is een classList-methode, dus je hebt geen puntje nodig... Dus gewoon 'red-focus' en niet '.red-focus'... Zucht.
+            });
+            document.querySelector(DOMstrings.inputButton).classList.toggle('red');
         },
 
         addListItem: function(obj, type) {      // veeleisend als we zijn, willen we de nieuwe items ook nog in de UI zien ipv alleen in de console
@@ -125,7 +203,7 @@ var UIController = (function() {        // voor het zichtbare stuk (dumb)
             // vervang opvulling door variabelen
             newHtml = html.replace('%id%', obj.id);
             newHtml = newHtml.replace('%description%', obj.description);    // hier gebruik je dus de net gecreëerde newHtml als input
-            newHtml = newHtml.replace('%value%', obj.value);                // en hier de vorige versie van newHtml
+            newHtml = newHtml.replace('%value%', formatNumber(obj.value, type));                // en hier de vorige versie van newHtml
 
             // gooi html het html-bestand in
             document.querySelector(element).insertAdjacentHTML('beforeend', newHtml);   // dus, je zoekt in de html het element waar je iets in wilt gooien, je zegt waar item precies moet komen (de smaken zijn: beforebegin (wordt sibling erboven erbij), afterbegin (wordt dus een child bovenaan erbij), beforeend (child onderaan erbij) en afterend (sibling onderaan erbij)). Jonas kiest ervoor nieuwe items onderaan in de lijst toe te voegen ipv bovenaan waar je ze meteen ziet zoals op mijn bankoverzicht
@@ -146,16 +224,47 @@ var UIController = (function() {        // voor het zichtbare stuk (dumb)
             fieldsArr[0].focus();   // hiermee zet je de focus (in welk veld de cursor staat) terug op het eerste element in fieldsArr. C'est quoi? Het descriptionveld.
         },
 
+        deleteListItem: function(selectorID) {
+            var el = document.getElementById(selectorID);
+            el.parentNode.removeChild(el);    // JavaScript kan niet het element zelf verwijderen, maar wel een child ervan. Dus je selecteert het te verwijderen element, gaat één stap omhoog met parentNode, en selecteert vervolgens het te vermoorden kind met precies dezelfde selectie als eerst. Zou je kunnen inkorten door de container te selecteren, maar dan hardcode je weer dingen
+        },                                     // dus je laat eigenlijk de boodschapper een briefje bezorgen met 'kill the messenger'.     "Hey kid, is your mommy home?" ... "Hello mrs Parent, kill your kid"
+
         displayBudget: function(obj) {
-            document.querySelector(DOMstrings.budgetLabel).textContent = obj.budget;    // we veranderen alleen de tekst, niet de html
-            document.querySelector(DOMstrings.incomeLabel).textContent = obj.totalInc;
-            document.querySelector(DOMstrings.expensesLabel).textContent = obj.totalExp;
+            var type;
+            obj.budget > 0 ? type = 'inc' : type = 'exp';
+            
+            document.querySelector(DOMstrings.budgetLabel).textContent = formatNumber(obj.budget, type);    // we veranderen alleen de tekst, niet de html
+            document.querySelector(DOMstrings.incomeLabel).textContent = formatNumber(obj.totalInc, 'inc');
+            document.querySelector(DOMstrings.expensesLabel).textContent = formatNumber(obj.totalExp, 'exp');
 
             if (obj.percentage > 0) {
                 document.querySelector(DOMstrings.percentageLabel).textContent = obj.percentage + '%';  // als het percentage ergens op slaat, willen we getal% doorgeven
             } else {
                 document.querySelector(DOMstrings.percentageLabel).textContent = "-";   // zonder inkomen ook geen percentage
             }
+        },
+
+        displayPercentages: function(percentages) {
+            var fields = document.querySelectorAll(DOMstrings.expensesPercLabel);   // returnt een lijst - een node list, want elke div etc in html heet een node.
+            
+            nodeListForEach(fields, function(current, index) {      // hier gooien we in wat we gewend zijn te doen voor een forEach
+                if (percentages[index] > 0) {
+                    current.textContent = percentages[index] + '%';     // verander het tekstelement van het huidige item in de lijst in het bijbehorende huidige percentage
+                } else {
+                    current.textContent = '-';
+                }
+            })
+        },
+
+        displayMonth: function() {
+            var now, year, month, months;
+            now = new Date();
+
+            year = now.getFullYear();
+            month = now.getMonth();     // hiermee krijg je een nummer, en dat nummer is zero-based... Dus februari is 1.
+            months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+            document.querySelector(DOMstrings.dateLabel).textContent = months[month] + ' ' + year;
         }
     };
 })();
@@ -176,6 +285,8 @@ var controller = (function(budgetCtrl, UICtrl) {          // voor het samenbreng
         });
 
         document.querySelector(DOM.container).addEventListener('click', ctrlDeleteItem);
+
+        document.querySelector(DOM.inputType).addEventListener('change', UICtrl.changedType);   // call die functie als hier daadwerkelijk iets anders wordt geselecteerd (change) en niet alleen wordt geklikt
 
     }; // dus waar zetten we de call? In weer een aparte functie: init. Zie onder
 
@@ -204,18 +315,48 @@ var controller = (function(budgetCtrl, UICtrl) {          // voor het samenbreng
             UICtrl.clearFields();
             // calculate and update budget
             updateBudget();
+
+            // calc and update expense percentages
+            updatePercentages();
         }   // else screw you met je foute input :-P
     };
 
+    var updatePercentages = function() {
+        // calc %
+        budgetCtrl.calculatePercentages();
+        // read %from bud contrl
+        var percentages = budgetCtrl.getPercentages();
+        // update UI
+        UICtrl.displayPercentages(percentages);
+
+    };
+
     var ctrlDeleteItem = function(event) {
-        var itemID;                             // opmerking Jonas: we hebben met die 4 parentNodes dus het traversen van de DOM gehardcoded, máár: we hebben de structuur van het element bij het toevoegen óók gehardcoded (die lange html-string hierboven in addListItem)
+        var itemID, splitID, type, ID;                             // opmerking Jonas: we hebben met die 4 parentNodes dus het traversen van de DOM gehardcoded, máár: we hebben de structuur van het element bij het toevoegen óók gehardcoded (die lange html-string hierboven in addListItem)
 
         itemID = event.target.parentNode.parentNode.parentNode.parentNode.id;       // .parentNode maakt dat het target niet langer dat icoontje is maar de button zelf. De tweede, derde en vierde .parentNode verschuift de aandacht omhoog naar het hele Income/Expense-element, en dan daar de id van
-    }
+
+        if (itemID) {
+
+            splitID = itemID.split('-');    // .split splijt een string, haalt het gevoerde element (de -) eruit en returnt de rest in brokjes in een array. Dus 'inc-1' wordt [inc, 1], en 'dd-ss-tt-hh' wordt [dd, ss, tt, hh].
+            type = splitID[0];
+            ID = parseInt(splitID[1]);        // met parseInt omdat het deel van een string was en dus nog steeds een string is, dus kun je hem niet met !== vergelijken met een nummer uit data.totals[type] en ooit true krijgen. != vermijdt Jonas altijd.  (dus deze had je met deze altijd even lange ID's ook nog wel met itemID[4] kunnen doen, maar voor type is dat omslachtiger...)
+
+            budgetCtrl.deleteItem(type, ID);
+
+            UICtrl.deleteListItem(itemID);  // met UIC spreek je de taal van de DOM, dus rechtstreeks wat je uit de DOM hebt ontvangen: 'inc-1' of zoiets
+
+            updateBudget();
+
+            updatePercentages();
+
+        }
+    };
 
     return {    
         init: function() {      // dus we returnen hier een initfunctie die dus expliciet de boel moet opstarten; niks mag automatisch...?
             console.log('there but for the grace of god goes this app');
+            UICtrl.displayMonth();
             UICtrl.displayBudget({      // dit doen we dus alléén maar om alles in het begin op 0 te hebben in plaats van op die willekeurige getallen die Jonas er zelf in gehardcoded heeft. Lekker Jonas
                 budget: 0,
                 totalInc: 0,
@@ -230,4 +371,4 @@ var controller = (function(budgetCtrl, UICtrl) {          // voor het samenbreng
 
 // Behold! De enige regel code buiten de controllers. Die dingen hebben wel een control issue
 
-controller.init();  // [cue hemels gezang]
+controller.init();  // <-- [cue hemels gezang]
