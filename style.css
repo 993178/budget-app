@@ -185,13 +185,13 @@ body {
 
 .income {
     float: left;
-    width: 475px;
+    width: 35%;
     margin-right: 40px;
 }
 
 .expenses {
     float: left;
-    width: 475px;
+    width: 35%;
 }
 
 h2 {
